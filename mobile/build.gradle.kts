@@ -12,10 +12,11 @@ android {
     // Both modules use Gradle's same ~/.android/debug.keystore.
     buildTypes { debug { signingConfig = signingConfigs.getByName("debug") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
 }
 dependencies {
     implementation(project(":shared"))
     implementation("androidx.compose.material3:material3")
 }
+
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

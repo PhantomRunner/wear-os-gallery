@@ -12,7 +12,6 @@ android {
     // Both modules use Gradle's same ~/.android/debug.keystore.
     buildTypes { debug { signingConfig = signingConfigs.getByName("debug") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
 }
 dependencies {
@@ -21,3 +20,5 @@ dependencies {
     implementation("androidx.wear.compose:compose-foundation:1.5.0")
     implementation("androidx.wear.compose:compose-navigation:1.5.0")
 }
+
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

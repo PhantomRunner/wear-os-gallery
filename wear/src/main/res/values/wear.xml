@@ -1,1 +1,4 @@
-<resources><string-array name="android_wear_capabilities"><item>pixel_watch_gallery_receiver_v1</item></string-array></resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Google Play services discovers this array by its required resource name. -->
+    <string-array name="android_wear_capabilities" tools:ignore="UnusedResources,Typos"><item>pixel_watch_gallery_receiver_v1</item></string-array>
+</resources>

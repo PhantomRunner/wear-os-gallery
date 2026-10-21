@@ -1,10 +1,12 @@
 package com.pixelwatchgallery.mobile
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.util.AtomicFile
+import androidx.core.net.toUri
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.wearable.Asset
@@ -23,7 +25,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -47,7 +48,7 @@ class TransferRepository private constructor(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sendMutex = Mutex()
     private val journal = AtomicFile(File(context.filesDir, "transfers.json"))
-    private val outbox = File(context.filesDir, "outbox").apply { mkdirs() }
+    private val outbox by lazy { File(context.filesDir, "outbox").apply { check(isDirectory || mkdirs()) { "Cannot create transfer storage." } } }
     private val mutablePhotos = MutableStateFlow<List<TransferPhoto>>(emptyList())
     val photos = mutablePhotos.asStateFlow()
     private val mutableBusy = MutableStateFlow(false)
@@ -101,7 +102,7 @@ class TransferRepository private constructor(private val context: Context) {
         val original = photos.value.firstOrNull { it.id == id } ?: return
         if (original.state == TransferState.CONFIRMED) return
         try {
-            update(id) { it.copy(state = TransferState.PREPARING, detail = "Checking watch connection…") }
+            update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(state = TransferState.PREPARING, detail = "Checking watch connection…") }
             check(GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS) {
                 "Google Play services is unavailable. Install or update it, then retry."
             }
@@ -112,7 +113,8 @@ class TransferRepository private constructor(private val context: Context) {
                 else nodes.sortedWith(compareByDescending<com.google.android.gms.wearable.Node> { it.isNearby }.thenBy { it.id }).firstOrNull()
             checkNotNull(node) { "Watch app not reachable. Install and open Pixel Watch Gallery on your paired watch, connect the devices, then retry." }
             val attempt = UUID.randomUUID().toString()
-            update(id) { it.copy(node = node.id, attempt = attempt, detail = "Reading original image…") }
+            update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(node = node.id, attempt = attempt, detail = "Reading original image…") }
+            if (photos.value.firstOrNull { it.id == id }?.state == TransferState.CONFIRMED) return
             val staged = File(outbox, id)
             val mime: String
             if (staged.isFile && original.mime.isNotEmpty()) {
@@ -120,20 +122,21 @@ class TransferRepository private constructor(private val context: Context) {
             } else {
                 val temporary = File(outbox, "$id.part")
                 try {
-                    context.contentResolver.openInputStream(Uri.parse(original.uri))?.use { input ->
+                    context.contentResolver.openInputStream(original.uri.toUri())?.use { input ->
                         FileOutputStream(temporary).use { output -> input.copyTo(output); output.fd.sync() }
                     } ?: error("Cannot read this photo. Remove it and select it again.")
                     val detected = temporary.inputStream().use { stream ->
                         val header = ByteArray(12); stream.read(header); PhotoProtocol.detectMime(header)
                     } ?: error("Unsupported image format. Choose JPEG, PNG or WebP.")
-                    val declared = context.contentResolver.getType(Uri.parse(original.uri))
+                    val declared = context.contentResolver.getType(original.uri.toUri())
                     mime = PhotoValidation.validate(temporary, if (declared == null || declared == "application/octet-stream") detected else declared)
                     check(temporary.renameTo(staged)) { "Could not prepare image storage. Check free space and retry." }
                 } finally { temporary.delete() }
             }
             val localNode = withTimeout(15_000) { Wearable.getNodeClient(context).localNode.await() }
             val dataUri = Uri.Builder().scheme("wear").authority(localNode.id).path(PhotoProtocol.PREFIX + id).build()
-            update(id) { it.copy(state = TransferState.QUEUED, mime = mime, dataUri = dataUri.toString(), detail = "Submitting original image…") }
+            update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(state = TransferState.QUEUED, mime = mime, dataUri = dataUri.toString(), detail = "Submitting original image…") }
+            if (photos.value.firstOrNull { it.id == id }?.state == TransferState.CONFIRMED) return
             ParcelFileDescriptor.open(staged, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 val request = PutDataMapRequest.create(PhotoProtocol.PREFIX + id).apply {
                     dataMap.putString(PhotoProtocol.ID, id)
@@ -147,6 +150,9 @@ class TransferRepository private constructor(private val context: Context) {
             update(id) {
                 if (it.state == TransferState.CONFIRMED || it.state == TransferState.FAILED) it
                 else it.copy(state = TransferState.QUEUED, detail = "Queued · waiting for watch receipt. Large originals may take several minutes.")
+            }
+            if (photos.value.firstOrNull { it.id == id }?.state == TransferState.CONFIRMED) {
+                runCatching { withTimeout(15_000) { Wearable.getDataClient(context).deleteDataItems(dataUri).await() } }
             }
         } catch (e: Exception) {
             runCatching { update(id) {
@@ -168,7 +174,7 @@ class TransferRepository private constructor(private val context: Context) {
             update(id) { it.copy(state = TransferState.CONFIRMED, detail = "Confirmed · saved on watch") }
             File(outbox, id).delete()
             if (photo.dataUri.isNotEmpty()) runCatching {
-                withTimeout(15_000) { Wearable.getDataClient(context).deleteDataItems(Uri.parse(photo.dataUri)).await() }
+                withTimeout(15_000) { Wearable.getDataClient(context).deleteDataItems(photo.dataUri.toUri()).await() }
             }
         } else if (ack.optString(PhotoProtocol.ATTEMPT) == photo.attempt) {
             update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(state = TransferState.FAILED,
@@ -205,6 +211,8 @@ class TransferRepository private constructor(private val context: Context) {
     }
 
     companion object {
+        // The singleton retains only applicationContext, never an Activity.
+        @SuppressLint("StaticFieldLeak")
         @Volatile private var instance: TransferRepository? = null
         fun get(context: Context): TransferRepository = instance ?: synchronized(this) {
             instance ?: TransferRepository(context.applicationContext).also { instance = it }

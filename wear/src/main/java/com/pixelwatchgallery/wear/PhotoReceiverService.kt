@@ -3,10 +3,12 @@ package com.pixelwatchgallery.wear
 import android.util.Log
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.pixelwatchgallery.shared.PhotoProtocol
+import com.pixelwatchgallery.shared.awaitReleasable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
@@ -23,7 +25,7 @@ class PhotoReceiverService : WearableListenerService() {
                 val id = PhotoProtocol.idFromPath(item.uri.path.orEmpty()) ?: continue
                 val sender = item.uri.host ?: continue
                 var attempt = ""
-                try {
+                val failure = try {
                     val map = DataMapItem.fromDataItem(item).dataMap
                     val localNode = withTimeout(15_000) { Wearable.getNodeClient(this@PhotoReceiverService).localNode.await() }
                     if (map.getString("receiver") != localNode.id) continue
@@ -34,17 +36,26 @@ class PhotoReceiverService : WearableListenerService() {
                         val mime = map.getString(PhotoProtocol.MIME) ?: error("Missing image format.")
                         PhotoProtocol.extension(mime)
                         val asset = map.getAsset(PhotoProtocol.IMAGE) ?: error("Missing image data.")
-                        val result = withTimeout(60_000) { Wearable.getDataClient(this@PhotoReceiverService).getFdForAsset(asset).await() }
+                        var result: DataClient.GetFdForAssetResponse? = null
                         try {
-                            val input = result.inputStream ?: error("Image asset is unavailable. Retry from the phone.")
+                            // Assign inside the timeout so its exit cannot strand an acquired FD.
+                            // If Play services completes later, awaitReleasable releases it instead.
+                            withTimeout(60_000) {
+                                result = Wearable.getDataClient(this@PhotoReceiverService).getFdForAsset(asset).awaitReleasable()
+                            }
+                            val input = result?.inputStream ?: error("Image asset is unavailable. Retry from the phone.")
                             input.use { repository.receive(id, mime, it) }
-                        } finally { result.release() }
+                        } finally { result?.release() }
                     } else { repository.refresh() }
-                    acknowledge(sender, id, attempt, true)
+                    null
                 } catch (e: Exception) {
                     Log.w("GalleryReceiver", "Could not receive $id", e)
-                    runCatching { acknowledge(sender, id, attempt, false, e.message ?: "Could not save image. Check free storage and retry.") }
+                    e.message ?: "Could not save image. Check free storage and retry."
                 }
+                // ACK transport failure says nothing about storage. Never send a negative
+                // receipt merely because delivery of the successful receipt failed.
+                runCatching { acknowledge(sender, id, attempt, failure == null, failure.orEmpty()) }
+                    .onFailure { Log.w("GalleryReceiver", "Receipt delivery failed for $id; manual retry is safe", it) }
             }
         }
     }

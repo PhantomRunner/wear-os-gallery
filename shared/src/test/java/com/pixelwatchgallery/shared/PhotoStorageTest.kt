@@ -94,6 +94,40 @@ class PhotoStorageTest {
         assertArrayEquals(original, restored.list().single().readBytes())
     }
 
+    @Test fun uuidReceiptAndDeletionDoNotScanPhotoCollection() {
+        val root = Files.createTempDirectory("gallery-scans").toFile()
+        val directory = object : File(root.path) {
+            var scans = 0
+            override fun listFiles(): Array<File>? { scans++; return super.listFiles() }
+        }
+        try {
+            val store = AtomicPhotoStore(directory)
+            directory.scans = 0
+            val id = UUID.randomUUID().toString()
+            assertFalse(store.received(id))
+            assertTrue(store.save(id, "image/jpeg", ByteArrayInputStream(byteArrayOf(1))) { _, _ -> })
+            assertTrue(store.received(id))
+            assertFalse(store.save(id, "image/jpeg", ByteArrayInputStream(byteArrayOf(9))) { _, _ -> fail("Duplicate must not decode") })
+            store.delete(id)
+            assertTrue(store.received(id))
+            assertEquals(0, directory.scans)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun legacyFilesInEverySupportedFormatKeepTheirBytesAndDeduplicate() = withStore { store, dir ->
+        PhotoProtocol.extensions.forEach { (mime, extension) ->
+            val id = UUID.randomUUID().toString()
+            val bytes = byteArrayOf(1, 2, 3, extension.length.toByte())
+            val existing = File(dir, "$id.$extension").apply { writeBytes(bytes) }
+            assertTrue(store.received(id))
+            assertFalse(store.save(id, mime, ByteArrayInputStream(byteArrayOf(9))) { _, _ -> fail("Legacy bytes must be retained") })
+            assertArrayEquals(bytes, existing.readBytes())
+            store.delete(id)
+            assertFalse(existing.exists())
+            assertTrue(store.received(id))
+        }
+    }
+
     @Test fun invalidIdentifiersCannotEscapePrivateStorage() = withStore { store, _ ->
         for (id in listOf("../escape", "1-1-1-1-1", "", "12345678-1234-1234-1234-123456789ABC")) {
             assertFalse(PhotoProtocol.validId(id))

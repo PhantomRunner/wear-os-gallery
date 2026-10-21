@@ -58,17 +58,7 @@ adb devices -l
 adb pair WATCH_IP:PAIRING_PORT       # enter the pairing code shown by the watch
 adb connect WATCH_IP:DEBUG_PORT     # this port can differ from the pairing port
 adb devices -l
-
-# Replace these values with the intended devices from adb devices -l.
-PHONE_SERIAL='REPLACE_WITH_PHONE_SERIAL'
-WATCH_SERIAL='REPLACE_WITH_WATCH_SERIAL'  # often WATCH_IP:DEBUG_PORT
-adb -s "$PHONE_SERIAL" shell getprop ro.product.model
-adb -s "$WATCH_SERIAL" shell getprop ro.product.model
-adb -s "$PHONE_SERIAL" install -r mobile/build/outputs/apk/optimized/mobile-optimized.apk
-adb -s "$WATCH_SERIAL" install -r wear/build/outputs/apk/optimized/wear-optimized.apk
-adb -s "$PHONE_SERIAL" shell am start -n com.pixelwatchgallery/.mobile.MainActivity
-adb -s "$WATCH_SERIAL" shell am start -n com.pixelwatchgallery/.wear.MainActivity
-```
+``
 
 Verify each device's identity and that its ADB state is `device` before installing. Every install uses an explicit serial; do not omit `-s` when both devices are connected. Launch **Pixel Watch Gallery** on both devices once after installation. Android Studio's module selector can also install `mobile` and `wear` on their respective devices. Wireless ADB is for development; normal photo transfers use Wearable Data Layer over the paired connection.
 
@@ -90,14 +80,6 @@ Originals above **5 MB** show a non-blocking warning and remain sendable. JPEG/W
 Confirmed entries remain on the phone until removed. Their receipt is a historical transfer result: deleting a photo on the watch does not change the phone's status. To deliberately send a deleted image again, select it again to create a new transfer UUID.
 
 Transfers start only from **Send to Watch**, **Retry**, or **Retry confirmation**. Android can finish an already queued transfer after reconnection. Restarting the app does not initiate new transfers. A manual batch continues while the phone process remains alive; an interrupted preparation is marked failed at restart and can be retried. Already submitted DataItems do not require the Activity to remain open. A lost ACK after process termination is recovered by a manual retry.
-
-## Verification
-
-```bash
-./gradlew :shared:testDebugUnitTest :mobile:testDebugUnitTest :mobile:lintDebug :wear:lintDebug
-```
-
-Tests exercise original-byte storage, atomic failure cleanup, restart recovery, UUID/path validation, duplicate delivery, delete-then-retry behavior, late Asset cleanup, and acknowledgment ordering. See [architecture](docs/ARCHITECTURE.md), the [12-step physical-device checklist](docs/TESTING.md#minimum-acceptance-run), the [v0.2 performance audit and measurement guide](docs/PERFORMANCE.md), and [build verification record](docs/BUILD_VERIFICATION.md). Compilation and JVM tests do not establish that paired hardware transfers or watch gestures have been tested.
 
 ## Scope and limits
 

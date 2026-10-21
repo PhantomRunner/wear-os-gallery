@@ -17,6 +17,7 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation("androidx.compose.material3:material3")
+    testImplementation("junit:junit:4.13.2")
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

@@ -41,7 +41,19 @@ data class TransferPhoto(
     val node: String = "",
     val dataUri: String = "",
     val attempt: String = ""
-)
+) {
+    fun withAcknowledgment(sourceNode: String, ackAttempt: String, ok: Boolean, error: String): TransferPhoto {
+        if (node.isEmpty() || node != sourceNode) return this
+        // A successful historical attempt still proves this UUID was saved. A failure only
+        // describes its own attempt and cannot undo a confirmed receipt or a newer retry.
+        return when {
+            ok -> copy(state = TransferState.CONFIRMED, detail = "Confirmed · saved on watch")
+            state != TransferState.CONFIRMED && attempt.isNotEmpty() && ackAttempt == attempt ->
+                copy(state = TransferState.FAILED, detail = "Watch: $error")
+            else -> this
+        }
+    }
+}
 
 /** Application-scoped: rotation or leaving the Activity does not cancel a manual send. */
 class TransferRepository private constructor(private val context: Context) {
@@ -133,6 +145,8 @@ class TransferRepository private constructor(private val context: Context) {
                     check(temporary.renameTo(staged)) { "Could not prepare image storage. Check free space and retry." }
                 } finally { temporary.delete() }
             }
+            // Keep a usable staged original even if node lookup or submission fails next.
+            update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(mime = mime) }
             val localNode = withTimeout(15_000) { Wearable.getNodeClient(context).localNode.await() }
             val dataUri = Uri.Builder().scheme("wear").authority(localNode.id).path(PhotoProtocol.PREFIX + id).build()
             update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(state = TransferState.QUEUED, mime = mime, dataUri = dataUri.toString(), detail = "Submitting original image…") }
@@ -169,16 +183,18 @@ class TransferRepository private constructor(private val context: Context) {
         val ack = JSONObject(payload.toString(Charsets.UTF_8))
         val id = ack.getString(PhotoProtocol.ID)
         if (!PhotoProtocol.validId(id)) return
-        val photo = photos.value.firstOrNull { it.id == id && it.node == sourceNode } ?: return
-        if (ack.optBoolean("ok")) {
-            update(id) { it.copy(state = TransferState.CONFIRMED, detail = "Confirmed · saved on watch") }
-            File(outbox, id).delete()
-            if (photo.dataUri.isNotEmpty()) runCatching {
-                withTimeout(15_000) { Wearable.getDataClient(context).deleteDataItems(photo.dataUri.toUri()).await() }
-            }
-        } else if (ack.optString(PhotoProtocol.ATTEMPT) == photo.attempt) {
-            update(id) { if (it.state == TransferState.CONFIRMED) it else it.copy(state = TransferState.FAILED,
-                detail = "Watch: ${ack.optString("error", "Could not save photo. Check free storage and retry.")}") }
+        val ok = ack.optBoolean("ok")
+        val photo = synchronized(this) {
+            val current = photos.value.firstOrNull { it.id == id && it.node == sourceNode } ?: return
+            val next = current.withAcknowledgment(sourceNode, ack.optString(PhotoProtocol.ATTEMPT), ok,
+                ack.optString("error", "Could not save photo. Check free storage and retry."))
+            // Check the current attempt and persist its state under the same lock as retry updates.
+            if (next != current) update(id) { next }
+            next.takeIf { ok && it.state == TransferState.CONFIRMED }
+        } ?: return
+        File(outbox, id).delete()
+        if (photo.dataUri.isNotEmpty()) runCatching {
+            withTimeout(15_000) { Wearable.getDataClient(context).deleteDataItems(photo.dataUri.toUri()).await() }
         }
     }
 

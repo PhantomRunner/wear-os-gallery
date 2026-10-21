@@ -2,6 +2,8 @@ package com.pixelwatchgallery.shared
 
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
 import java.nio.file.Files
 import java.util.UUID
 import org.junit.Assert.*
@@ -54,6 +56,42 @@ class PhotoStorageTest {
         val partial = File(dir, "${UUID.randomUUID()}.part").apply { writeBytes(byteArrayOf(1)) }
         assertTrue(AtomicPhotoStore(dir).list().isEmpty())
         assertFalse(partial.exists())
+    }
+
+    @Test fun interruptedInputLeavesNoPhotoAndCanBeRetried() = withStore { store, dir ->
+        val id = UUID.randomUUID().toString()
+        val interrupted = object : InputStream() {
+            private var reads = 0
+            override fun read(): Int = if (reads++ < 16) 1 else throw IOException("Asset disconnected")
+        }
+        assertThrows(IOException::class.java) {
+            store.save(id, "image/jpeg", interrupted) { _, _ -> fail("Incomplete files must not be validated") }
+        }
+        assertTrue(store.list().isEmpty())
+        assertFalse(store.received(id))
+        assertFalse(File(dir, "$id.part").exists())
+        assertTrue(store.save(id, "image/jpeg", ByteArrayInputStream(byteArrayOf(3))) { _, _ -> })
+    }
+
+    @Test fun photoIsInvisibleUntilValidationFinishes() = withStore { store, dir ->
+        val id = UUID.randomUUID().toString()
+        store.save(id, "image/png", ByteArrayInputStream(byteArrayOf(1, 2))) { file, _ ->
+            assertTrue(file.isFile)
+            assertTrue(store.list().isEmpty())
+            assertFalse(store.received(id))
+            assertFalse(File(dir, "$id.png").exists())
+        }
+        assertEquals("$id.png", store.list().single().name)
+    }
+
+    @Test fun publishedPhotoDeduplicatesAfterCrashBeforeReceipt() = withStore { _, dir ->
+        val id = UUID.randomUUID().toString()
+        val original = byteArrayOf(4, 5, 6)
+        File(dir, "$id.webp").writeBytes(original)
+        val restored = AtomicPhotoStore(dir)
+        assertTrue(restored.received(id))
+        assertFalse(restored.save(id, "image/webp", ByteArrayInputStream(byteArrayOf(9))) { _, _ -> fail("Saved photos must not be overwritten") })
+        assertArrayEquals(original, restored.list().single().readBytes())
     }
 
     @Test fun invalidIdentifiersCannotEscapePrivateStorage() = withStore { store, _ ->

@@ -1,6 +1,7 @@
 package com.pixelwatchgallery.wear
 
 import android.os.Bundle
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -18,8 +19,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -27,7 +30,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
+import androidx.wear.compose.foundation.GestureInclusion
 import androidx.wear.compose.foundation.pager.HorizontalPager
+import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.*
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
@@ -36,6 +41,7 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -48,11 +54,16 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
-    val photos by repository.photos.collectAsStateWithLifecycle()
+    val gallery by repository.state.collectAsStateWithLifecycle()
+    val photos = gallery.photos
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            runCatching { repository.refresh() }.onFailure { error = it.message ?: "Cannot open photo storage." }
+            runCatching { repository.refresh() }.onSuccess { error = null }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    error = it.message ?: "Cannot open photo storage."
+                }
         }
     }
     val nav = rememberSwipeDismissableNavController()
@@ -63,7 +74,8 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
                 GalleryGrid(photos, error) { file -> selectedId = file.nameWithoutExtension; nav.navigate("viewer") }
             }
             composable("viewer") {
-                PhotoViewer(photos, selectedId, onEmpty = { nav.popBackStack() }, onDelete = { repository.delete(it) })
+                // A restored back stack must wait for disk loading before deciding it is empty.
+                if (gallery.loaded) PhotoViewer(photos, selectedId, onEmpty = { nav.popBackStack() }, onDelete = { repository.delete(it) })
             }
         }
     }
@@ -110,6 +122,15 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
 private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Unit, onDelete: suspend (String) -> Unit) {
     val initialPage = remember { photos.indexOfFirst { it.nameWithoutExtension == initialId }.coerceAtLeast(0) }
     val pager = rememberPagerState(initialPage = initialPage, pageCount = { photos.size })
+    val context = LocalContext.current
+    val accessibility = remember(context) { context.getSystemService(AccessibilityManager::class.java) }
+    val gestures = remember(accessibility) {
+        object : GestureInclusion {
+            override fun ignoreGestureStart(offset: Offset, layoutCoordinates: LayoutCoordinates): Boolean =
+                accessibility?.isTouchExplorationEnabled != true &&
+                    offset.x <= layoutCoordinates.size.width * PagerDefaults.LeftEdgeZoneFraction
+        }
+    }
     val scope = rememberCoroutineScope()
     var deleteId by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
@@ -120,8 +141,9 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
     }
     if (photos.isEmpty()) return
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // Wear's pager reserves the left edge for swipe-to-dismiss navigation.
-        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), key = { photos[it].name }) { page ->
+        // Reserve the left edge on every page; the library default does so only on page zero.
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), gestureInclusion = gestures,
+            key = { photos[it].name }) { page ->
             photos.getOrNull(page)?.let { photo -> LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Fit) }
         }
         Text("${(pager.currentPage + 1).coerceAtMost(photos.size)} / ${photos.size}",
@@ -141,7 +163,10 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
                 deleting = true
                 scope.launch {
                     runCatching { onDelete(id) }.onSuccess { deleteId = null; error = null }
-                        .onFailure { error = it.message ?: "Could not delete. Try again." }
+                        .onFailure {
+                            if (it is CancellationException) throw it
+                            error = it.message ?: "Could not delete. Try again."
+                        }
                     deleting = false
                 }
             })

@@ -22,7 +22,7 @@ class AtomicPhotoStore(private val directory: File) {
 
     @Synchronized fun received(id: String): Boolean {
         require(PhotoProtocol.validId(id))
-        return File(receipts, id).exists() || list().any { it.nameWithoutExtension == id }
+        return File(receipts, id).isFile || PhotoProtocol.extensions.values.any { File(directory, "$id.$it").isFile }
     }
 
     @Synchronized fun save(id: String, mime: String, input: InputStream, validate: (File, String) -> Unit): Boolean {
@@ -43,8 +43,9 @@ class AtomicPhotoStore(private val directory: File) {
         require(PhotoProtocol.validId(id))
         // Retain a tiny tombstone: retrying a lost ACK must not resurrect a deleted photo.
         recordReceipt(id)
-        list().filter { it.nameWithoutExtension == id }.forEach {
-            check(it.delete()) { "Could not delete the photo. Please try again." }
+        PhotoProtocol.extensions.values.forEach { extension ->
+            val file = File(directory, "$id.$extension")
+            check(!file.exists() || file.delete()) { "Could not delete the photo. Please try again." }
         }
     }
 

@@ -21,10 +21,12 @@ class PhotoRepository private constructor(context: Context) {
     val state = mutableState.asStateFlow()
     // Serialize each filesystem operation together with publication of its resulting snapshot.
     private val mutationLock = Mutex()
+    private var indexed = false
 
     suspend fun refresh() = withContext(Dispatchers.IO) {
         mutationLock.withLock {
-            try { mutableState.value = GalleryState(store.list(), loaded = true) }
+            if (indexed) return@withLock
+            try { mutableState.value = GalleryState(store.list(), loaded = true); indexed = true }
             catch (e: Exception) {
                 mutableState.value = mutableState.value.copy(loaded = true)
                 throw e
@@ -34,14 +36,18 @@ class PhotoRepository private constructor(context: Context) {
     suspend fun received(id: String) = withContext(Dispatchers.IO) { store.received(id) }
     suspend fun receive(id: String, mime: String, input: InputStream) = withContext(Dispatchers.IO) {
         mutationLock.withLock {
-            store.save(id, mime, input) { file, type -> PhotoValidation.validate(file, type); Unit }
-            mutableState.value = GalleryState(store.list(), loaded = true)
+            val saved = store.save(id, mime, input) { file, type -> PhotoValidation.validate(file, type); Unit }
+            if (saved || !indexed) {
+                mutableState.value = GalleryState(store.list(), loaded = true)
+                indexed = true
+            }
         }
     }
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
         mutationLock.withLock {
             store.delete(id)
             mutableState.value = GalleryState(store.list(), loaded = true)
+            indexed = true
         }
     }
 

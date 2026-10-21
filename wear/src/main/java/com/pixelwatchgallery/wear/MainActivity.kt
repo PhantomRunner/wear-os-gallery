@@ -24,6 +24,8 @@ import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -40,6 +42,8 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.size.Precision
+import coil.size.Scale
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -104,11 +108,11 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
             scope.launch { state.scrollBy(it.verticalScrollPixels) }; true
         }.focusable(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 36.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item(span = { GridItemSpan(2) }) {
+        item(span = { GridItemSpan(2) }, contentType = "header") {
             Text("${photos.size} ${if (photos.size == 1) "photo" else "photos"}", Modifier.fillMaxWidth().padding(bottom = 4.dp),
                 textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall)
         }
-        items(photos, key = { it.name }) { photo ->
+        items(photos, key = { it.name }, contentType = { "photo" }) { photo ->
             Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainer).clickable { onOpen(photo) }) {
                 LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Crop)
@@ -175,9 +179,20 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
 
 @Composable
 private fun LocalPhoto(file: File, modifier: Modifier, scale: ContentScale) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val dimension = with(LocalDensity.current) {
+        if (scale == ContentScale.Crop) ((configuration.screenWidthDp - 56).coerceAtLeast(2) / 2f).dp.roundToPx()
+        else minOf(configuration.screenWidthDp, configuration.screenHeightDp).coerceAtLeast(1).dp.roundToPx()
+    }.coerceAtLeast(1)
+    val request = remember(context, file.path, dimension, scale) {
+        ImageRequest.Builder(context).data(file).size(dimension).precision(Precision.INEXACT)
+            // Bound both dimensions even for very wide/tall originals; cropping is display-only.
+            .scale(Scale.FIT).memoryCacheKey("${file.path}:$dimension").crossfade(false).build()
+    }
     var failed by remember(file.path) { mutableStateOf(false) }
     Box(modifier, contentAlignment = Alignment.Center) {
-        AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(file).size(if (scale == ContentScale.Crop) 180 else 512).build(),
+        AsyncImage(model = request,
             contentDescription = "Saved photo", modifier = Modifier.fillMaxSize(), contentScale = scale,
             onError = { failed = true })
         if (failed) Text("Cannot display photo", Modifier.padding(12.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)

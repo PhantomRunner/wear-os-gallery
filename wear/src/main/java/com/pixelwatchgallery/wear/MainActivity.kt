@@ -58,8 +58,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
-    val gallery by repository.state.collectAsStateWithLifecycle()
-    val photos = gallery.photos
+    // Navigation retains destination content. Capture the State holder, then read its value
+    // inside each destination so that receipts/deletions invalidate the visible screen.
+    val galleryState = repository.state.collectAsStateWithLifecycle()
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -75,11 +76,13 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         SwipeDismissableNavHost(navController = nav, startDestination = "gallery") {
             composable("gallery") {
-                GalleryGrid(photos, error) { file -> selectedId = file.nameWithoutExtension; nav.navigate("viewer") }
+                val gallery by galleryState
+                GalleryGrid(gallery.photos, error) { file -> selectedId = file.nameWithoutExtension; nav.navigate("viewer") }
             }
             composable("viewer") {
+                val gallery by galleryState
                 // A restored back stack must wait for disk loading before deciding it is empty.
-                if (gallery.loaded) PhotoViewer(photos, selectedId, onEmpty = { nav.popBackStack() }, onDelete = { repository.delete(it) })
+                if (gallery.loaded) PhotoViewer(gallery.photos, selectedId, onEmpty = { nav.popBackStack() }, onDelete = { repository.delete(it) })
             }
         }
     }

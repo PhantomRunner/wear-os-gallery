@@ -6,8 +6,9 @@ android {
         applicationId = "com.pixelwatchgallery"
         minSdk = 30
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.2.1"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // Both modules use Gradle's same ~/.android/debug.keystore.
     buildTypes {
@@ -30,6 +31,9 @@ dependencies {
     implementation("androidx.wear.compose:compose-material3:1.5.0")
     implementation("androidx.wear.compose:compose-foundation:1.5.0")
     implementation("androidx.wear.compose:compose-navigation:1.5.0")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.08.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

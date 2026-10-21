@@ -6,11 +6,23 @@ android {
         applicationId = "com.pixelwatchgallery"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2"
     }
     // Both modules use Gradle's same ~/.android/debug.keystore.
-    buildTypes { debug { signingConfig = signingConfigs.getByName("debug") } }
+    buildTypes {
+        debug { signingConfig = signingConfigs.getByName("debug") }
+        create("optimized") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Personal updates must use the same certificate as the installed debug APKs.
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     buildFeatures { compose = true }
 }

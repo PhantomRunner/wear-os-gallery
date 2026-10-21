@@ -12,7 +12,6 @@ dependencies {
     api("androidx.compose.foundation:foundation")
     api("androidx.compose.ui:ui")
     api("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
-    api("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     api("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     api("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     api("com.google.android.gms:play-services-wearable:20.0.1")

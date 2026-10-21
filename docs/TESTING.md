@@ -119,3 +119,22 @@ Use the same signing key and `adb install -r` to update existing v0.1 installati
 - [ ] Rotate/recreate the phone Activity, then restart the phone process. Batch totals and receipt counts persist. Interrupted preparation/submission is retryable; already queued DataItems remain unconfirmed until ACK.
 - [ ] Follow `docs/PERFORMANCE.md` with 10 and 50 images. Scroll, repeatedly page, delete, background the watch UI and receive another photo. Check bounded memory, no accumulation, responsive gestures, and no idle polling.
 - [ ] Check capability discovery/background receipt with both optimized APKs: shrinking must not remove the capability array or listener services.
+
+
+## Watch gallery visibility regression (0.2.1)
+
+`GalleryRefreshTest` runs on a disposable Wear OS emulator. It creates synthetic PNGs through the same repository used by the background receiver, verifies live gallery and viewer updates after receive/delete, and removes only its own generated UUIDs. It does not test paired Data Layer transport.
+
+Build the target and test APKs, then explicitly select an intended disposable emulator. Never run installation commands with an unidentified serial:
+
+```bash
+./gradlew :wear:assembleDebug :wear:assembleDebugAndroidTest
+TEST_WATCH_SERIAL='REPLACE_WITH_DISPOSABLE_EMULATOR_SERIAL'
+adb -s "$TEST_WATCH_SERIAL" install -r wear/build/outputs/apk/debug/wear-debug.apk
+adb -s "$TEST_WATCH_SERIAL" install -r wear/build/outputs/apk/androidTest/debug/wear-debug-androidTest.apk
+adb -s "$TEST_WATCH_SERIAL" shell am instrument -w -r -e class com.pixelwatchgallery.wear.GalleryRefreshTest com.pixelwatchgallery.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Verification on 2026-10-21: both tests failed against the pre-fix v0.2 APK, then both passed against v0.2.1. A valid pre-existing PNG remained in private storage across the same-key `install -r` update. The emulator display was set to 384 × 384 pixels. This is functional emulator coverage, not physical Pixel Watch performance or paired-transfer testing.
+
+Physical acceptance: update the watch with `install -r`, reopen it and verify previously received photos appear without re-sending. Send one additional photo while the gallery is open, open the viewer, and delete one disposable test copy; displayed counts must update immediately.

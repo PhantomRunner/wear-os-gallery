@@ -121,7 +121,7 @@ class TransferRepository private constructor(private val context: Context) {
             if (ids.isEmpty()) return@launch
             if (newBatch || mutableBatch.value == null) {
                 val selected = photos.value.filter { it.id in ids }
-                edit(TransferBatch(UUID.randomUUID().toString(), selected.map { BatchPhoto(it.id, it.sizeBytes, it.state) })) { it }
+                editBatch(TransferBatch(UUID.randomUUID().toString(), selected.map { BatchPhoto(it.id, it.sizeBytes, it.state) })) { it }
             }
             // Obtain exact staged sizes for the whole batch before any new DataItem is sent.
             // Unknown provider sizes never require reading an image into RAM.
@@ -240,7 +240,8 @@ class TransferRepository private constructor(private val context: Context) {
     }
 
     @Synchronized private fun update(id: String, transform: (TransferPhoto) -> TransferPhoto) = edit { list -> list.map { if (it.id == id) transform(it) else it } }
-    @Synchronized private fun edit(batch: TransferBatch? = mutableBatch.value, transform: (List<TransferPhoto>) -> List<TransferPhoto>) {
+    @Synchronized private fun edit(transform: (List<TransferPhoto>) -> List<TransferPhoto>) = editBatch(mutableBatch.value, transform)
+    @Synchronized private fun editBatch(batch: TransferBatch?, transform: (List<TransferPhoto>) -> List<TransferPhoto>) {
         val next = transform(mutablePhotos.value)
         val array = JSONArray()
         next.forEach { photo -> array.put(JSONObject().apply {
@@ -281,7 +282,7 @@ class TransferRepository private constructor(private val context: Context) {
                 if (old.isActive) "Preparation interrupted. Tap Retry." else p.getString("detail"),
                 p.optString("mime"), p.optString("node"), p.optString("dataUri"), p.optString("attempt"), p.sizeOrNull())
         }
-        edit(savedBatch) { loaded }
+        editBatch(savedBatch) { loaded }
         outbox.listFiles()?.filter { it.name.endsWith(".part") || loaded.none { p -> p.id == it.name && p.state != TransferState.CONFIRMED } }?.forEach { it.delete() }
     }
 

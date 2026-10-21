@@ -13,7 +13,8 @@ export JAVA_HOME=/path/to/jdk-17
 export ANDROID_HOME="$HOME/Android/Sdk"
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
-./gradlew :mobile:assembleDebug :wear:assembleDebug
+chmod +x gradlew
+./gradlew clean :mobile:assembleDebug :wear:assembleDebug --stacktrace
 ```
 
 Set `JAVA_HOME` explicitly if `java` is missing from your shell or Android Studio bundles a different JDK. On the development machine used for verification, JDK 17 is at `/home/srgwx/.jdks/temurin-17`. JDK 25 cannot run this pinned Gradle/Kotlin toolchain. In Android Studio, select JDK 17 under **Settings → Build, Execution, Deployment → Build Tools → Gradle → Gradle JDK**.
@@ -31,18 +32,35 @@ Both use application ID `com.pixelwatchgallery` and the same default `$HOME/.and
 
 ## Install on a phone and Pixel Watch 2
 
-Pair the watch to your Android phone using its normal companion app. Google Play services must work on both devices. Enable Developer options and USB debugging on the phone. Enable Developer options and wireless debugging on the watch. Use a trusted local network and the pairing/connection addresses shown on the watch:
+Pair the watch to your Android phone using the Google Pixel Watch companion app. Google Play services must work on both devices. On the phone, enable Developer options and USB debugging, attach its USB cable, and accept the computer's RSA authorization prompt.
+
+To connect Pixel Watch 2 to Linux ADB:
+
+1. Connect the watch and computer to the same trusted Wi-Fi network.
+2. On the watch, open **Settings → System → About → Versions** and tap **Build number** seven times to enable Developer options (labels can vary by OS version).
+3. Open **Settings → Developer options**, enable **ADB debugging**, then open **Wireless debugging** and enable it. Accept the network prompt if shown.
+4. Tap **Pair new device**. Keep the pairing-code screen open and use its IP address and **pairing port** with `adb pair`; enter the displayed code when prompted.
+5. Return to the main **Wireless debugging** screen. Use that screen's IP address and **connection port** with `adb connect`. The two ports usually differ and may change when wireless debugging restarts. This follows the [official Wear OS Wi-Fi debugging procedure](https://developer.android.com/training/wearables/get-started/debug-wifi).
 
 ```bash
+export PATH="$ANDROID_HOME/platform-tools:$PATH"
 adb devices -l
 adb pair WATCH_IP:PAIRING_PORT       # enter the pairing code shown by the watch
 adb connect WATCH_IP:DEBUG_PORT     # this port can differ from the pairing port
 adb devices -l
-adb -s PHONE_SERIAL install -r mobile/build/outputs/apk/debug/mobile-debug.apk
-adb -s WATCH_IP:DEBUG_PORT install -r wear/build/outputs/apk/debug/wear-debug.apk
+
+# Replace these values with the intended devices from adb devices -l.
+PHONE_SERIAL='REPLACE_WITH_PHONE_SERIAL'
+WATCH_SERIAL='REPLACE_WITH_WATCH_SERIAL'  # often WATCH_IP:DEBUG_PORT
+adb -s "$PHONE_SERIAL" shell getprop ro.product.model
+adb -s "$WATCH_SERIAL" shell getprop ro.product.model
+adb -s "$PHONE_SERIAL" install -r mobile/build/outputs/apk/debug/mobile-debug.apk
+adb -s "$WATCH_SERIAL" install -r wear/build/outputs/apk/debug/wear-debug.apk
+adb -s "$PHONE_SERIAL" shell am start -n com.pixelwatchgallery/.mobile.MainActivity
+adb -s "$WATCH_SERIAL" shell am start -n com.pixelwatchgallery/.wear.MainActivity
 ```
 
-Replace device identifiers with those from `adb devices -l`. Launch **Pixel Watch Gallery** on both devices once after installation. Android Studio's module selector can also install `mobile` and `wear` on their respective devices. Wireless ADB is for development; normal photo transfers use Wearable Data Layer over the paired connection.
+Verify each device's identity and that its ADB state is `device` before installing. Every install uses an explicit serial; do not omit `-s` when both devices are connected. Launch **Pixel Watch Gallery** on both devices once after installation. Android Studio's module selector can also install `mobile` and `wear` on their respective devices. Wireless ADB is for development; normal photo transfers use Wearable Data Layer over the paired connection.
 
 Use `adb install -r` with the same signing key for updates: it preserves `filesDir/photos/` and selections. **Uninstalling, clearing app data, or replacing the signing key does not preserve private photos.** Backups and device migration of app data are disabled. Android will reject an update signed by a different key.
 
@@ -62,10 +80,10 @@ Transfers start only from **Send to Watch**, **Retry**, or **Retry confirmation*
 ## Verification
 
 ```bash
-./gradlew :shared:testDebugUnitTest :mobile:lintDebug :wear:lintDebug
+./gradlew :shared:testDebugUnitTest :mobile:testDebugUnitTest :mobile:lintDebug :wear:lintDebug
 ```
 
-Tests exercise original-byte storage, atomic failure cleanup, restart recovery, UUID/path validation, duplicate delivery, and delete-then-retry behavior. See [architecture](docs/ARCHITECTURE.md), the [physical-device checklist](docs/TESTING.md), and [build verification record](docs/BUILD_VERIFICATION.md).
+Tests exercise original-byte storage, atomic failure cleanup, restart recovery, UUID/path validation, duplicate delivery, delete-then-retry behavior, late Asset cleanup, and acknowledgment ordering. See [architecture](docs/ARCHITECTURE.md), the [12-step physical-device checklist](docs/TESTING.md#minimum-acceptance-run), and [build verification record](docs/BUILD_VERIFICATION.md). Compilation and JVM tests do not establish that paired hardware transfers or watch gestures have been tested.
 
 ## Scope and limits
 

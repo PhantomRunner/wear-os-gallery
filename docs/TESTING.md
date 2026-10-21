@@ -1,6 +1,25 @@
 # Physical-device test checklist
 
-These are manual acceptance tests, not a record of completed hardware testing. No paired physical phone/watch was available during resumed verification. Build and automated test results are recorded in [BUILD_VERIFICATION.md](BUILD_VERIFICATION.md).
+These are manual acceptance tests, not a record of completed hardware testing. No ADB devices were attached during the audit. Build and automated test results are recorded in [BUILD_VERIFICATION.md](BUILD_VERIFICATION.md).
+
+## Minimum acceptance run
+
+After Wi-Fi ADB pairing and device identification using the README, execute these steps on a paired phone and Pixel Watch 2:
+
+1. [ ] Install `mobile-debug.apk` on the intended phone using its explicit ADB serial.
+2. [ ] Install `wear-debug.apk` on the intended watch using its explicit ADB serial; launch the watch app once so the background receiver is available.
+3. [ ] Open the phone app.
+4. [ ] Select three JPEG or PNG images.
+5. [ ] Tap **Send to Watch**.
+6. [ ] Confirm all three entries reach **Confirmed** on the phone.
+7. [ ] Open the watch gallery; verify three photos appear.
+8. [ ] Open a photo and swipe through all three. Check left-edge Back from every page, then return to the gallery.
+9. [ ] Disconnect the phone from the watch (turn off the phone's Bluetooth and Wi-Fi, or power it off).
+10. [ ] Reopen the watch gallery and confirm all three photos remain accessible offline.
+11. [ ] Delete one watch photo and confirm the deletion.
+12. [ ] Restart the watch app and verify exactly two photos remain.
+
+All 12 steps require physical devices and remain untested here. The additional checks below cover failures and lifecycle edge cases.
 
 ## Setup and installation
 
@@ -37,7 +56,9 @@ These are manual acceptance tests, not a record of completed hardware testing. N
 
 ## Browsing, offline storage and deletion
 
-- [ ] Tap a thumbnail. Verify the entire photo fits the viewer and EXIF orientation is respected. Swipe horizontally across the center to browse; left-edge swipe and normal system Back return to the grid.
+- [ ] Tap a thumbnail. Verify the entire photo fits the viewer and EXIF orientation is respected. Swipe horizontally across the center to browse; left-edge swipe and normal system Back return to the grid from every page. Verify TalkBack navigation separately if enabled.
+- [ ] While viewing a middle photo, recreate the Activity or terminate its background process and reopen the task. A restored viewer must wait for disk loading and retain its current page instead of incorrectly returning to an empty gallery.
+- [ ] Send a photo while deleting or reopening the gallery. The visible photo count must match stored files after concurrent refresh, receipt, and deletion.
 - [ ] Scroll a grid larger than one screen using touch and the crown. Check thumbnails and controls against the round screen edges.
 - [ ] Disable the phone/watch connection after confirmation. Restart the watch app and reboot the watch; photos remain available offline.
 - [ ] Open **Delete**, cancel, and confirm the photo remains. Repeat and confirm deletion. Only the watch copy disappears; the phone original remains.

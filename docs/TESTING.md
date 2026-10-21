@@ -103,3 +103,19 @@ adb -s WATCH_IP:DEBUG_PORT logcat -v time GalleryReceiver:V AndroidRuntime:E '*:
 ```
 
 Record the device OS versions, APK version, image format/size, visible transfer state, and whether the watch was reachable. To troubleshoot a transfer that stays queued, verify matching application IDs and signing certificates, launch both apps, reconnect the paired devices, and use **Retry confirmation**.
+
+## v0.2 progress and update regressions
+
+Use the same signing key and `adb install -r` to update existing v0.1 installations to v0.2. Use the optimized APK paths from the README for personal installation; debug paths above remain available for diagnostics. Do not uninstall or clear data. `run-as` extraction requires debug; optimized is intentionally not debuggable.
+
+- [ ] Existing watch photos and receipts survive the update. Existing phone selections remain readable. No new transfer starts merely because either app opens.
+- [ ] Send images of different byte sizes (for example 200 KB, 800 KB, 6 MB). The large file shows a warning but is allowed. Confirmed bytes/percentage advance in steps weighted by file size, while the receipt count advances one per ACK.
+- [ ] Verify normal transfer below 1 MB and between 1–5 MB. Try an image above 5 MB without resizing it. Byte hashes remain identical to the selected original.
+- [ ] Select an image from a provider without size metadata. No fabricated percentage is displayed; staging obtains the actual file length before new submissions.
+- [ ] Disconnect before the final ACK. The batch must not display Completed/100% until every photo is confirmed. Retry a lost ACK repeatedly; neither bytes nor photo counts inflate.
+- [ ] While batch A is waiting for a receipt, select other photos and Send batch B. A late ACK for A updates its historical card only; B's denominator and received count stay unchanged.
+- [ ] Remove a confirmed historical card. Its current batch receipt remains counted. Newly selected cards do not change the displayed batch until Send is tapped again.
+- [ ] Include an unsupported/unreadable file or simulate insufficient storage. It does not count as completed. Other valid files may still finish; the batch reports failure and offers per-photo retry.
+- [ ] Rotate/recreate the phone Activity, then restart the phone process. Batch totals and receipt counts persist. Interrupted preparation/submission is retryable; already queued DataItems remain unconfirmed until ACK.
+- [ ] Follow `docs/PERFORMANCE.md` with 10 and 50 images. Scroll, repeatedly page, delete, background the watch UI and receive another photo. Check bounded memory, no accumulation, responsive gestures, and no idle polling.
+- [ ] Check capability discovery/background receipt with both optimized APKs: shrinking must not remove the capability array or listener services.

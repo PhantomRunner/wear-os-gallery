@@ -16,16 +16,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.input.rotary.onPreRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -33,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.foundation.GestureInclusion
+import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.rememberPagerState
@@ -103,11 +105,9 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
         return
     }
     val state = rememberLazyGridState()
-    val focus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { focus.requestFocus() }
     LazyVerticalGrid(columns = GridCells.Fixed(2), state = state,
-        modifier = Modifier.fillMaxSize().focusRequester(focus).onRotaryScrollEvent {
+        modifier = Modifier.fillMaxSize().testTag("gallery-grid").requestFocusOnHierarchyActive().onRotaryScrollEvent {
             scope.launch { state.scrollBy(it.verticalScrollPixels) }; true
         }.focusable(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 36.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -129,6 +129,11 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
 private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Unit, onDelete: suspend (String) -> Unit) {
     val initialPage = remember { photos.indexOfFirst { it.nameWithoutExtension == initialId }.coerceAtLeast(0) }
     val pager = rememberPagerState(initialPage = initialPage, pageCount = { photos.size })
+    val zoom = remember(photos.getOrNull(pager.currentPage)?.name) { PhotoZoomState() }
+    val zoomed by remember(zoom) { derivedStateOf { zoom.isZoomed } }
+    val crownThreshold = with(LocalDensity.current) { 32.dp.toPx() }
+    val crown = remember(crownThreshold) { CrownPhotoStepper(crownThreshold) }
+    var crownTarget by remember { mutableStateOf<Int?>(null) }
     val context = LocalContext.current
     val accessibility = remember(context) { context.getSystemService(AccessibilityManager::class.java) }
     val gestures = remember(accessibility) {
@@ -142,16 +147,32 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
     var deleteId by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(crownTarget) {
+        val target = crownTarget ?: return@LaunchedEffect
+        if (photos.isNotEmpty()) pager.scrollToPage(target.coerceIn(0, photos.lastIndex))
+        if (crownTarget == target) crownTarget = null
+    }
     LaunchedEffect(photos.size) {
         if (photos.isEmpty()) onEmpty()
         else if (pager.currentPage >= photos.size) pager.scrollToPage(photos.lastIndex)
     }
     if (photos.isEmpty()) return
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(Color.Black).testTag("photo-viewer")
+        .onPreRotaryScrollEvent { event ->
+            if (deleteId == null && photos.size > 1) {
+                val steps = crown.steps(event.verticalScrollPixels, event.uptimeMillis)
+                if (steps != 0) crownTarget = wrappedPhotoIndex(crownTarget ?: pager.currentPage, steps, photos.size)
+            }
+            true
+        }) {
         // Reserve the left edge on every page; the library default does so only on page zero.
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), gestureInclusion = gestures,
+            userScrollEnabled = !zoomed,
             key = { photos[it].name }) { page ->
-            photos.getOrNull(page)?.let { photo -> LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Fit) }
+            photos.getOrNull(page)?.let { photo ->
+                if (page == pager.currentPage) ZoomablePhoto(photo, zoom)
+                else LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Fit)
+            }
         }
         Text("${(pager.currentPage + 1).coerceAtMost(photos.size)} / ${photos.size}",
             Modifier.align(Alignment.TopCenter).padding(top = 16.dp).background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
@@ -181,15 +202,19 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
 }
 
 @Composable
-private fun LocalPhoto(file: File, modifier: Modifier, scale: ContentScale) {
+internal fun LocalPhoto(file: File, modifier: Modifier, scale: ContentScale,
+    detailed: Boolean = false, onImageSize: (Size) -> Unit = {}) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val dimension = with(LocalDensity.current) {
+    val baseDimension = with(LocalDensity.current) {
         if (scale == ContentScale.Crop) ((configuration.screenWidthDp - 56).coerceAtLeast(2) / 2f).dp.roundToPx()
         else minOf(configuration.screenWidthDp, configuration.screenHeightDp).coerceAtLeast(1).dp.roundToPx()
     }.coerceAtLeast(1)
-    val request = remember(context, file.path, dimension, scale) {
-        ImageRequest.Builder(context).data(file).size(dimension).precision(Precision.INEXACT)
+    // Only two decode levels: display size normally and a bounded detail request while zoomed.
+    val dimension = if (detailed) (baseDimension * MAX_PHOTO_ZOOM).toInt().coerceAtMost(1024) else baseDimension
+    val request = remember(context, file.path, dimension, scale, detailed) {
+        ImageRequest.Builder(context).data(file).size(dimension)
+            .precision(if (detailed) Precision.EXACT else Precision.INEXACT)
             // Bound both dimensions even for very wide/tall originals; cropping is display-only.
             .scale(Scale.FIT).memoryCacheKey("${file.path}:$dimension").crossfade(false).build()
     }
@@ -197,7 +222,10 @@ private fun LocalPhoto(file: File, modifier: Modifier, scale: ContentScale) {
     Box(modifier, contentAlignment = Alignment.Center) {
         AsyncImage(model = request,
             contentDescription = "Saved photo", modifier = Modifier.fillMaxSize(), contentScale = scale,
-            onError = { failed = true })
+            onError = { failed = true }, onSuccess = {
+                failed = false
+                onImageSize(Size(it.result.drawable.intrinsicWidth.toFloat(), it.result.drawable.intrinsicHeight.toFloat()))
+            })
         if (failed) Text("Cannot display photo", Modifier.padding(12.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
     }
 }

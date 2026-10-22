@@ -30,3 +30,5 @@ Replace the serial placeholders with your devices from `adb devices -l`. Build b
 2. Select photos on your phone and tap **Send to Watch**.
 3. Wait for confirmation, then open the watch gallery.
 4. Tap a photo to view it, swipe to browse, or choose **Delete** to remove only the watch copy.
+
+Pinch or double-tap to zoom; drag to pan while zoomed. Turn the crown to cycle through photos, wrapping at either end.

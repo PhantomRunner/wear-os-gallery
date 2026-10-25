@@ -6,8 +6,8 @@ android {
         applicationId = "com.pixelwatchgallery"
         minSdk = 30
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3"
+        versionCode = 5
+        versionName = "0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // Both modules use Gradle's same ~/.android/debug.keystore.
@@ -35,6 +35,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     testImplementation("junit:junit:4.13.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }

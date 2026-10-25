@@ -1,1 +1,6 @@
-<resources><string name="app_name">Pixel Watch Gallery</string></resources>
+<resources>
+    <string name="app_name">Pixel Watch Gallery</string>
+    <string name="show_photo_actions">Show photo actions</string>
+    <string name="hide_photo_actions">Hide photo actions</string>
+    <string name="toggle_photo_zoom">Toggle photo zoom</string>
+</resources>

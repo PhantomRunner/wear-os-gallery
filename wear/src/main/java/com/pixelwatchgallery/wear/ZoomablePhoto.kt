@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -22,6 +23,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -30,7 +34,9 @@ import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
-internal fun ZoomablePhoto(file: File, zoom: PhotoZoomState) {
+internal fun ZoomablePhoto(file: File, zoom: PhotoZoomState, actionLabel: String, onPhotoTap: () -> Unit) {
+    val tap by rememberUpdatedState(onPhotoTap)
+    val zoomLabel = stringResource(R.string.toggle_photo_zoom)
     val zoomed by remember(zoom) { derivedStateOf { zoom.isZoomed } }
     var allowPan by remember { mutableStateOf(true) }
     val transform = rememberTransformableState { scale, pan, _ -> zoom.transform(scale, pan) }
@@ -40,7 +46,8 @@ internal fun ZoomablePhoto(file: File, zoom: PhotoZoomState) {
         .onSizeChanged(zoom::updateViewport)
         .semantics {
             stateDescription = "Zoom ${(zoom.scale * 100).roundToInt()}%"
-            onClick(label = "Toggle photo zoom") { zoom.toggle(); true }
+            onClick(label = actionLabel) { tap(); true }
+            customActions = listOf(CustomAccessibilityAction(zoomLabel) { zoom.toggle(); true })
         }
         .pointerInput(Unit) {
             awaitEachGesture {
@@ -51,7 +58,10 @@ internal fun ZoomablePhoto(file: File, zoom: PhotoZoomState) {
                 while (event.changes.any { it.pressed })
             }
         }
-        .pointerInput(zoom) { detectTapGestures(onDoubleTap = { zoom.toggle(it) }) }
+        .pointerInput(zoom) {
+            // Holding a finger pauses the controls timer; releasing that hold is not a tap.
+            detectTapGestures(onTap = { tap() }, onDoubleTap = { zoom.toggle(it) }, onLongPress = {})
+        }
         .transformable(transform, canPan = { zoom.isZoomed && allowPan }, lockRotationOnZoomPan = true)) {
         LocalPhoto(file, Modifier.fillMaxSize().graphicsLayer {
             scaleX = zoom.scale; scaleY = zoom.scale

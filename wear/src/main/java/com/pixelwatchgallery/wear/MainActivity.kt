@@ -1,9 +1,18 @@
 package com.pixelwatchgallery.wear
 
 import android.os.Bundle
+import android.os.Build
+import android.os.SystemClock
+import android.view.HapticFeedbackConstants
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -19,17 +28,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.input.rotary.onPreRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
@@ -41,6 +57,7 @@ import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.*
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
+import androidx.wear.compose.navigation.currentBackStackEntryAsState
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -49,6 +66,8 @@ import coil.size.Scale
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,9 +79,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
-    // Navigation retains destination content. Capture the State holder, then read its value
-    // inside each destination so that receipts/deletions invalidate the visible screen.
+    // Read the State holders inside retained navigation destinations (including restored ones).
     val galleryState = repository.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val positions = remember(context) { WatchPositionStore.get(context) }
+    val positionState = positions.state.collectAsStateWithLifecycle()
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -73,25 +94,62 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
                 }
         }
     }
+    DisposableEffect(lifecycle, positions) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) positions.flush()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); positions.flush() }
+    }
     val nav = rememberSwipeDismissableNavController()
+    val entry by nav.currentBackStackEntryAsState()
     var selectedId by rememberSaveable { mutableStateOf("") }
+    var restored by remember { mutableStateOf(false) }
+    val loaded = galleryState.value.loaded && positionState.value.loaded
+    LaunchedEffect(loaded) {
+        if (!loaded || restored) return@LaunchedEffect
+        val id = positionState.value.position.resumePhoto(galleryState.value.photos.map { it.nameWithoutExtension })
+        if (id != null) {
+            selectedId = id
+            if (nav.currentBackStackEntry?.destination?.route != "viewer") nav.navigate("viewer") { launchSingleTop = true }
+        } else {
+            if (nav.currentBackStackEntry?.destination?.route == "viewer") nav.popBackStack()
+            positions.showGallery()
+        }
+        restored = true
+    }
+    LaunchedEffect(entry, restored) {
+        if (restored && entry?.destination?.route == "gallery" && nav.currentBackStackEntry?.destination?.route == "gallery") {
+            positions.showGallery()
+        }
+    }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         SwipeDismissableNavHost(navController = nav, startDestination = "gallery") {
             composable("gallery") {
                 val gallery by galleryState
-                GalleryGrid(gallery.photos, error) { file -> selectedId = file.nameWithoutExtension; nav.navigate("viewer") }
+                val position by positionState
+                if (restored) GalleryGrid(gallery.photos, error, position.position,
+                    onGridPosition = positions::saveGrid,
+                    onOpen = { file ->
+                        selectedId = file.nameWithoutExtension
+                        positions.openPhoto(selectedId)
+                        nav.navigate("viewer")
+                    })
             }
             composable("viewer") {
                 val gallery by galleryState
-                // A restored back stack must wait for disk loading before deciding it is empty.
-                if (gallery.loaded) PhotoViewer(gallery.photos, selectedId, onEmpty = { nav.popBackStack() }, onDelete = { repository.delete(it) })
+                if (restored) PhotoViewer(gallery.photos, selectedId, lifecycle,
+                    onPhotoSelected = { selectedId = it; positions.openPhoto(it) },
+                    onEmpty = { nav.popBackStack() }, onDelete = { repository.delete(it) })
             }
         }
+        if (!restored) Text("Gallery", Modifier.align(Alignment.Center), style = MaterialTheme.typography.titleMedium)
     }
 }
 
 @Composable
-private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Unit) {
+private fun GalleryGrid(photos: List<File>, error: String?, position: WatchPosition,
+    onGridPosition: (String?, Int) -> Unit, onOpen: (File) -> Unit) {
     if (photos.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(horizontal = 30.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -104,7 +162,24 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
         }
         return
     }
-    val state = rememberLazyGridState()
+    val initialPosition = remember { position }
+    val ids = photos.map { it.nameWithoutExtension }
+    val state = rememberLazyGridState(initialPosition.gridIndex(ids), initialPosition.gridOffset(ids))
+    val currentPhotos by rememberUpdatedState(photos)
+    val savePosition by rememberUpdatedState(onGridPosition)
+    LaunchedEffect(state) {
+        val initialIds = currentPhotos.map { it.nameWithoutExtension }
+        // Override an index-only Compose restoration with our stable photo anchor.
+        state.scrollToItem(initialPosition.gridIndex(initialIds), initialPosition.gridOffset(initialIds))
+        snapshotFlow {
+            val index = state.firstVisibleItemIndex
+            val anchor = if (index == 0) null else {
+                val key = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }?.key
+                currentPhotos.firstOrNull { it.name == key }?.nameWithoutExtension ?: return@snapshotFlow null
+            }
+            anchor to state.firstVisibleItemScrollOffset
+        }.filterNotNull().distinctUntilChanged().collect { (anchor, offset) -> savePosition(anchor, offset) }
+    }
     val scope = rememberCoroutineScope()
     LazyVerticalGrid(columns = GridCells.Fixed(2), state = state,
         modifier = Modifier.fillMaxSize().testTag("gallery-grid").requestFocusOnHierarchyActive().onRotaryScrollEvent {
@@ -116,7 +191,7 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
                 textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall)
         }
         items(photos, key = { it.name }, contentType = { "photo" }) { photo ->
-            Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(16.dp))
+            Box(Modifier.fillMaxWidth().aspectRatio(1f).testTag("grid-photo-${photo.nameWithoutExtension}").clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainer).clickable { onOpen(photo) }) {
                 LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Crop)
             }
@@ -126,15 +201,38 @@ private fun GalleryGrid(photos: List<File>, error: String?, onOpen: (File) -> Un
 
 @OptIn(ExperimentalWearFoundationApi::class)
 @Composable
-private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Unit, onDelete: suspend (String) -> Unit) {
+private fun PhotoViewer(photos: List<File>, initialId: String, lifecycle: Lifecycle,
+    onPhotoSelected: (String) -> Unit, onEmpty: () -> Unit, onDelete: suspend (String) -> Unit) {
     val initialPage = remember { photos.indexOfFirst { it.nameWithoutExtension == initialId }.coerceAtLeast(0) }
     val pager = rememberPagerState(initialPage = initialPage, pageCount = { photos.size })
-    val zoom = remember(photos.getOrNull(pager.currentPage)?.name) { PhotoZoomState() }
+    var positioned by remember { mutableStateOf(false) }
+    LaunchedEffect(pager) {
+        // Pager's saver restores an index; UUID restoration must win when new photos shifted it.
+        if (photos.isNotEmpty()) pager.scrollToPage(initialPage)
+        positioned = true
+    }
+    val currentPhoto = photos.getOrNull(pager.currentPage)?.name
+    val zoom = remember(currentPhoto) { PhotoZoomState() }
+    val controls = remember(currentPhoto) { ViewerControls() }
+    var touching by remember { mutableStateOf(false) }
+    val touchExploration = rememberTouchExploration()
+    var active by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
+    DisposableEffect(lifecycle, controls) {
+        val observer = LifecycleEventObserver { _, event ->
+            active = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (event == Lifecycle.Event.ON_START) controls.opened()
+            if (event == Lifecycle.Event.ON_STOP) controls.expire()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     val zoomed by remember(zoom) { derivedStateOf { zoom.isZoomed } }
     val crownThreshold = with(LocalDensity.current) { 32.dp.toPx() }
     val crown = remember(crownThreshold) { CrownPhotoStepper(crownThreshold) }
     var crownTarget by remember { mutableStateOf<Int?>(null) }
     val context = LocalContext.current
+    val view = LocalView.current
+    val feedback = remember { CrownFeedbackGate() }
     val accessibility = remember(context) { context.getSystemService(AccessibilityManager::class.java) }
     val gestures = remember(accessibility) {
         object : GestureInclusion {
@@ -147,9 +245,21 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
     var deleteId by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    AutoHideControls(controls, touching, deleteId != null, touchExploration, active)
+    val notifySelection by rememberUpdatedState(onPhotoSelected)
+    LaunchedEffect(pager, photos) {
+        snapshotFlow {
+            if (positioned && !pager.isScrollInProgress) photos.getOrNull(pager.settledPage)?.nameWithoutExtension else null
+        }.filterNotNull().distinctUntilChanged().collect { notifySelection(it) }
+    }
     LaunchedEffect(crownTarget) {
         val target = crownTarget ?: return@LaunchedEffect
+        val previousId = photos.getOrNull(pager.currentPage)?.name
         if (photos.isNotEmpty()) pager.scrollToPage(target.coerceIn(0, photos.lastIndex))
+        val nextId = photos.getOrNull(pager.currentPage)?.name
+        if (feedback.request(previousId, nextId, SystemClock.uptimeMillis())) {
+            view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 34) HapticFeedbackConstants.SEGMENT_TICK else HapticFeedbackConstants.CLOCK_TICK)
+        }
         if (crownTarget == target) crownTarget = null
     }
     LaunchedEffect(photos.size) {
@@ -158,6 +268,17 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
     }
     if (photos.isEmpty()) return
     Box(Modifier.fillMaxSize().background(Color.Black).testTag("photo-viewer")
+        .semantics { stateDescription = "${(pager.currentPage + 1).coerceAtMost(photos.size)} / ${photos.size}" }
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                touching = true
+                try {
+                    do { val event = awaitPointerEvent(PointerEventPass.Initial) }
+                    while (event.changes.any { it.pressed })
+                } finally { touching = false }
+            }
+        }
         .onPreRotaryScrollEvent { event ->
             if (deleteId == null && photos.size > 1) {
                 val steps = crown.steps(event.verticalScrollPixels, event.uptimeMillis)
@@ -170,22 +291,30 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
             userScrollEnabled = !zoomed,
             key = { photos[it].name }) { page ->
             photos.getOrNull(page)?.let { photo ->
-                if (page == pager.currentPage) ZoomablePhoto(photo, zoom)
+                if (page == pager.currentPage) ZoomablePhoto(photo, zoom,
+                    stringResource(if (controls.actionsVisible) R.string.hide_photo_actions else R.string.show_photo_actions), controls::tap)
                 else LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Fit)
             }
         }
-        Text("${(pager.currentPage + 1).coerceAtMost(photos.size)} / ${photos.size}",
-            Modifier.align(Alignment.TopCenter).padding(top = 16.dp).background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall)
-        TextButton(onClick = { deleteId = photos.getOrNull(pager.currentPage)?.nameWithoutExtension },
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp).width(80.dp).heightIn(min = 48.dp)) {
-            Text("Delete", style = MaterialTheme.typography.labelSmall)
+        AnimatedVisibility(controls.counterVisible, Modifier.align(Alignment.TopCenter),
+            enter = fadeIn(tween(150)), exit = fadeOut(tween(150))) {
+            Text("${(pager.currentPage + 1).coerceAtMost(photos.size)} / ${photos.size}",
+                Modifier.padding(top = 16.dp).background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall)
+        }
+        AnimatedVisibility(controls.actionsVisible, Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(tween(150)), exit = fadeOut(tween(150))) {
+            TextButton(onClick = { deleteId = photos.getOrNull(pager.currentPage)?.nameWithoutExtension },
+                enabled = controls.actionsVisible && deleteId == null && !deleting,
+                modifier = Modifier.padding(bottom = 8.dp).width(80.dp).heightIn(min = 48.dp).testTag("delete-photo")) {
+                Text("Delete", style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
     AlertDialog(visible = deleteId != null, onDismissRequest = { if (!deleting) deleteId = null },
         title = { Text("Delete photo?") }, text = { Text(error ?: "Removes only the copy on this watch.") },
         confirmButton = {
-            AlertDialogDefaults.ConfirmButton(onClick = {
+            AlertDialogDefaults.ConfirmButton(modifier = Modifier.testTag("confirm-delete"), onClick = {
                 if (deleting) return@ConfirmButton
                 val id = deleteId ?: return@ConfirmButton
                 deleting = true
@@ -198,7 +327,7 @@ private fun PhotoViewer(photos: List<File>, initialId: String, onEmpty: () -> Un
                     deleting = false
                 }
             })
-        }, dismissButton = { AlertDialogDefaults.DismissButton(onClick = { if (!deleting) { deleteId = null; error = null } }) })
+        }, dismissButton = { AlertDialogDefaults.DismissButton(modifier = Modifier.testTag("cancel-delete"), onClick = { if (!deleting) { deleteId = null; error = null } }) })
 }
 
 @Composable

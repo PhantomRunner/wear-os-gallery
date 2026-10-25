@@ -1,1 +1,56 @@
-<resources><string name="app_name">Pixel Watch Gallery</string></resources>
+<resources>
+    <string name="app_name">Pixel Watch Gallery</string>
+    <string name="add_photos">Add photos</string>
+    <string name="tab_selected">Selected · %1$d</string>
+    <string name="tab_sent">Sent · %1$d</string>
+    <string name="selected_hint">Your next watch favorites.</string>
+    <string name="sent_hint">Delivery history. Your watch gallery may have changed.</string>
+    <string name="empty_first_title">A little closer.\nOn your wrist.</string>
+    <string name="empty_first_body">Choose a few favorites to keep on your watch. Enjoy them even when your phone stays behind.</string>
+    <string name="supported_formats">JPEG, PNG &amp; WebP · Original quality</string>
+    <string name="empty_selected_title">You’re all caught up</string>
+    <string name="empty_selected_body">Your confirmed photos are in Sent. Add more whenever you’re ready.</string>
+    <string name="empty_sent_title">Good things take a moment</string>
+    <string name="empty_sent_body">Once your watch confirms a photo, its delivery will appear here.</string>
+    <string name="setup_hint">Open Pixel Watch Gallery on your paired watch before sending. Keep the devices connected until receipt is confirmed.</string>
+    <string name="send_count">Send to Watch · %1$d</string>
+    <string name="original_quality">Original files. Sent only when you tap.</string>
+    <string name="status_ready">Ready to send</string>
+    <string name="status_preparing">Preparing</string>
+    <string name="status_finding_watch">Finding your watch</string>
+    <string name="status_sending">Sending</string>
+    <string name="status_queued">Awaiting receipt</string>
+    <string name="status_confirmed">Received</string>
+    <string name="status_failed">Couldn’t send</string>
+    <string name="phase_idle">Ready</string>
+    <string name="phase_complete">Delivered to your watch</string>
+    <string name="phase_failed">Some photos need attention</string>
+    <string name="transfer_title">Watch transfer</string>
+    <plurals name="received_count">
+        <item quantity="one">%1$d of %2$d received</item>
+        <item quantity="other">%1$d of %2$d received</item>
+    </plurals>
+    <string name="received_percent">%1$d%% confirmed</string>
+    <string name="received_bytes">%1$s of %2$s received</string>
+    <string name="unknown_total">Calculating original sizes…</string>
+    <string name="receipt_hint">Progress updates when your watch confirms receipt.</string>
+    <plurals name="failed_count">
+        <item quantity="one">%1$d photo couldn’t be sent. Retry from Selected.</item>
+        <item quantity="other">%1$d photos couldn’t be sent. Retry from Selected.</item>
+    </plurals>
+    <string name="show_transfer_details">Show transfer details</string>
+    <string name="hide_transfer_details">Hide transfer details</string>
+    <string name="photo_options">Details for %1$s</string>
+    <string name="preview_unavailable">Preview unavailable</string>
+    <string name="size_unknown">Size unknown</string>
+    <string name="photo_details">Photo details</string>
+    <string name="close_details">Close details</string>
+    <string name="retry">Retry</string>
+    <string name="retry_photo">Retry %1$s</string>
+    <string name="retry_confirmation">Retry confirmation</string>
+    <string name="remove_selection">Remove from selection</string>
+    <string name="remove_history">Remove from history</string>
+    <string name="remove_explanation">Removing this entry only affects your phone. It won’t delete a photo from your watch or your photo library.</string>
+    <string name="large_original">Large original · Sending may take longer.</string>
+    <string name="technical_details">Transfer details</string>
+</resources>

@@ -32,3 +32,5 @@ Replace the serial placeholders with your devices from `adb devices -l`. Build b
 4. Tap a photo to view it, swipe to browse, or choose **Delete** to remove only the watch copy.
 
 Pinch or double-tap to zoom; drag to pan while zoomed. Turn the crown to cycle through photos, wrapping at either end.
+
+Use **Select** in the watch gallery to delete multiple photos. On your phone, **Sent → Clear history** removes delivery records while keeping your photos.

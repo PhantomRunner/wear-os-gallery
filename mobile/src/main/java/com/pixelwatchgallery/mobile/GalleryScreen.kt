@@ -39,6 +39,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Scale
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun GalleryScreen(
@@ -47,10 +48,15 @@ internal fun GalleryScreen(
     onSend: () -> Unit,
     onRetry: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onNoticeDismiss: () -> Unit = {}
+    onNoticeDismiss: () -> Unit = {},
+    onClearHistory: suspend (Set<String>) -> Boolean = { false }
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
+    var historyIds by rememberSaveable { mutableStateOf<List<String>?>(null) }
+    var clearing by remember { mutableStateOf(false) }
+    var clearFailed by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.notice) {
         state.notice?.let { snackbar.showSnackbar(it); onNoticeDismiss() }
@@ -112,6 +118,17 @@ internal fun GalleryScreen(
             modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).testTag("photo-grid"),
             contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (selectedTab == 1 && state.sent.isNotEmpty()) {
+                item(key = "clear-history", span = { GridItemSpan(maxLineSpan) }) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(enabled = !state.busy && !clearing, onClick = {
+                            historyIds = state.sent.map { it.id }; clearFailed = false
+                        }, modifier = Modifier.heightIn(min = 48.dp).testTag("clear-history")) {
+                            Text(stringResource(R.string.clear_history))
+                        }
+                    }
+                }
+            }
             state.progress?.takeIf { it.count > 0 }?.let { progress ->
                 item(key = "transfer", span = { GridItemSpan(maxLineSpan) }) { TransferSummary(progress) }
             }
@@ -138,6 +155,30 @@ internal fun GalleryScreen(
         PhotoDetails(photo, state.canRetry(photo), state.canRemove(photo),
             onDismiss = { detailId = null }, onRetry = { onRetry(photo.id); detailId = null },
             onRemove = { onRemove(photo.id); detailId = null })
+    }
+    historyIds?.let { ids ->
+        AlertDialog(onDismissRequest = { if (!clearing) historyIds = null },
+            title = { Text(pluralStringResource(R.plurals.clear_history_title, ids.size, ids.size)) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.clear_history_explanation))
+                if (clearFailed) Text(stringResource(R.string.clear_history_failed), color = MaterialTheme.colorScheme.error)
+                if (clearing) CircularProgressIndicator(Modifier.size(24.dp).testTag("clearing-history"))
+            } },
+            confirmButton = {
+                TextButton(enabled = !state.busy && !clearing, modifier = Modifier.heightIn(min = 48.dp).testTag("confirm-clear-history"),
+                    onClick = {
+                        clearing = true
+                        scope.launch {
+                            try {
+                                if (onClearHistory(ids.toSet())) { historyIds = null; clearFailed = false }
+                                else clearFailed = true
+                            } finally { clearing = false }
+                        }
+                    }) { Text(stringResource(if (clearFailed) R.string.retry else R.string.clear_history)) }
+            }, dismissButton = {
+                TextButton(enabled = !clearing, onClick = { historyIds = null },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("cancel-clear-history")) { Text(stringResource(R.string.cancel)) }
+            })
     }
 }
 

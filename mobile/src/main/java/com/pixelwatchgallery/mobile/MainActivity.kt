@@ -34,5 +34,5 @@ private fun GalleryRoute(repository: TransferRepository) {
     GalleryScreen(state,
         onAdd = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
         onSend = repository::sendPending, onRetry = repository::retry, onRemove = repository::remove,
-        onNoticeDismiss = repository::dismissNotice)
+        onNoticeDismiss = repository::dismissNotice, onClearHistory = repository::clearHistory)
 }

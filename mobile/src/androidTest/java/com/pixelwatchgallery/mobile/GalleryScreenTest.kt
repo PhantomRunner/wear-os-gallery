@@ -184,6 +184,10 @@ class GalleryScreenTest {
         compose.onNodeWithTag("tab-sent").performClick()
         compose.waitForIdle()
         capture("sent")
+        compose.onNodeWithTag("clear-history").performScrollTo().performClick()
+        compose.onNodeWithTag("confirm-clear-history").assertIsDisplayed()
+        capture("clear-history")
+        compose.onNodeWithTag("cancel-clear-history").performClick()
         compose.onNodeWithTag("tab-selected").performClick()
         compose.runOnIdle {
             val entries = samples.take(4).mapIndexed { index, p ->
@@ -201,8 +205,64 @@ class GalleryScreenTest {
         capture("empty")
     }
 
+    @Test fun clearHistoryFreezesIdsAndCanCancelOrRetryWithoutLosingLateReceipts() {
+        val state = mutableStateOf(PhoneGalleryState(listOf(photo("sent", TransferState.CONFIRMED), photo("queued", TransferState.QUEUED), photo("failed", TransferState.FAILED))))
+        val requests = mutableListOf<Set<String>>()
+        compose.setContent { GalleryTheme {
+            GalleryScreen(state.value, {}, {}, {}, {}, onClearHistory = { ids ->
+                requests += ids
+                if (requests.size == 1) false else {
+                    state.value = state.value.copy(photos = state.value.photos.filterNot { it.id in ids })
+                    true
+                }
+            })
+        } }
+        compose.onNodeWithTag("clear-history").assertDoesNotExist()
+        compose.onNodeWithTag("tab-sent").performClick()
+        compose.onNodeWithTag("clear-history").performClick()
+        compose.onNodeWithTag("cancel-clear-history").performClick()
+        assertTrue(requests.isEmpty())
+        compose.onNodeWithTag("clear-history").performClick()
+        compose.runOnIdle { state.value = state.value.copy(photos = state.value.photos.map {
+            if (it.id == "queued") it.copy(state = TransferState.CONFIRMED) else it
+        }) }
+        compose.onNodeWithText("Clear 1 history entry?").assertIsDisplayed()
+        compose.onNodeWithTag("confirm-clear-history").performClick()
+        compose.onNodeWithText("Could not clear history. Your records are still available. Try again when no transfer is running.").assertIsDisplayed()
+        compose.onNodeWithTag("confirm-clear-history").performClick()
+        compose.onNodeWithText("Sent · 1").assertIsDisplayed()
+        assertEquals(listOf(setOf("sent"), setOf("sent")), requests)
+        compose.onNodeWithTag("tab-selected").performClick()
+        compose.onNodeWithTag("photo-failed").assertIsDisplayed()
+    }
+
+    @Test fun clearHistoryIsDisabledDuringTransferAndAbsentForEmptyHistory() {
+        val state = mutableStateOf(PhoneGalleryState(listOf(photo("sent", TransferState.CONFIRMED)), busy = true))
+        compose.setContent { GalleryTheme { GalleryScreen(state.value, {}, {}, {}, {}) } }
+        compose.onNodeWithTag("tab-sent").performClick()
+        compose.onNodeWithTag("clear-history").assertIsNotEnabled()
+        compose.runOnIdle { state.value = state.value.copy(busy = false) }
+        compose.onNodeWithTag("clear-history").assertIsEnabled()
+        compose.runOnIdle { state.value = PhoneGalleryState() }
+        compose.onNodeWithTag("clear-history").assertDoesNotExist()
+    }
+
+    @Test fun clearHistoryDialogRestoresItsFrozenSelection() {
+        val restore = StateRestorationTester(compose)
+        val state = mutableStateOf(PhoneGalleryState(listOf(photo("sent", TransferState.CONFIRMED))))
+        var requested: Set<String>? = null
+        restore.setContent { GalleryTheme { GalleryScreen(state.value, {}, {}, {}, {}, onClearHistory = { requested = it; true }) } }
+        compose.onNodeWithTag("tab-sent").performClick()
+        compose.onNodeWithTag("clear-history").performClick()
+        compose.runOnIdle { state.value = state.value.copy(photos = state.value.photos + photo("late", TransferState.CONFIRMED)) }
+        restore.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("confirm-clear-history").performClick()
+        assertEquals(setOf("sent"), requested)
+    }
+
     private fun capture(name: String) {
         // Wait for Coil's asynchronously loaded previews before saving evidence.
+        compose.waitForIdle()
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
         Thread.sleep(400)
         val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()

@@ -19,6 +19,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -58,7 +60,7 @@ data class TransferPhoto(
 }
 
 /** Application-scoped: rotation or leaving the Activity does not cancel a manual send. */
-class TransferRepository private constructor(private val context: Context) {
+class TransferRepository internal constructor(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sendMutex = Mutex()
     private val journal = AtomicFile(File(context.filesDir, "transfers.json"))
@@ -106,6 +108,28 @@ class TransferRepository private constructor(private val context: Context) {
             File(outbox, id).delete()
         }.onFailure { mutableNotice.value = "Could not remove selection: ${it.message}" }
     } }
+
+    /** Frozen dialog selection; late receipts and pending selections must survive. */
+    suspend fun clearHistory(ids: Set<String>): Boolean = withContext(Dispatchers.IO) {
+        ready.join()
+        if (!sendMutex.tryLock()) return@withContext false
+        try {
+            synchronized(this@TransferRepository) {
+                val removed = photos.value.filter { it.id in ids && it.state == TransferState.CONFIRMED }.map { it.id }.toSet()
+                val currentBatch = mutableBatch.value
+                val nextBatch = currentBatch?.takeUnless { batch ->
+                    batch.photos.isNotEmpty() && batch.photos.all { it.state == TransferState.CONFIRMED } &&
+                        batch.photos.all { entry -> entry.id in removed || photos.value.none { it.id == entry.id } }
+                }
+                // AtomicFile commits before either StateFlow changes. ACK uses the same monitor.
+                editBatch(nextBatch) { list -> list.filterNot { it.id in removed } }
+            }
+            true
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            false
+        } finally { sendMutex.unlock() }
+    }
 
     fun sendPending() = send(null, newBatch = true)
     fun retry(id: String) = send(listOf(id), newBatch = false)

@@ -53,4 +53,12 @@
     <string name="remove_explanation">Removing this entry only affects your phone. It won’t delete a photo from your watch or your photo library.</string>
     <string name="large_original">Large original · Sending may take longer.</string>
     <string name="technical_details">Transfer details</string>
+    <string name="clear_history">Clear history</string>
+    <plurals name="clear_history_title">
+        <item quantity="one">Clear %1$d history entry?</item>
+        <item quantity="other">Clear %1$d history entries?</item>
+    </plurals>
+    <string name="clear_history_explanation">Only these delivery records will be removed. Photos on your phone and watch will stay.</string>
+    <string name="clear_history_failed">Could not clear history. Your records are still available. Try again when no transfer is running.</string>
+    <string name="cancel">Cancel</string>
 </resources>

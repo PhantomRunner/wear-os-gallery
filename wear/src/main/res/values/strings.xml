@@ -3,4 +3,24 @@
     <string name="show_photo_actions">Show photo actions</string>
     <string name="hide_photo_actions">Hide photo actions</string>
     <string name="toggle_photo_zoom">Toggle photo zoom</string>
+    <string name="select_photos">Select</string>
+    <plurals name="selected_count">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <string name="select_all">Select all</string>
+    <string name="deselect_all">Deselect all</string>
+    <string name="delete_count">Delete · %1$d</string>
+    <string name="cancel_selection">Cancel</string>
+    <plurals name="delete_photos_title">
+        <item quantity="one">Delete %1$d photo?</item>
+        <item quantity="other">Delete %1$d photos?</item>
+    </plurals>
+    <string name="delete_photos_explanation">Removes only the selected copies on this watch.</string>
+    <string name="deleting_progress">Deleting %1$d of %2$d…</string>
+    <plurals name="batch_delete_failed">
+        <item quantity="one">Could not delete %1$d photo. Select Delete to retry.</item>
+        <item quantity="other">Could not delete %1$d photos. Select Delete to retry.</item>
+    </plurals>
+    <string name="selection_photo_description">Photo %1$d of %2$d</string>
 </resources>

@@ -15,6 +15,8 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
@@ -37,8 +39,12 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -64,10 +70,13 @@ import coil.request.ImageRequest
 import coil.size.Precision
 import coil.size.Scale
 import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+
+private val selectionProcess = UUID.randomUUID().toString()
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -84,6 +93,7 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
     val context = LocalContext.current
     val positions = remember(context) { WatchPositionStore.get(context) }
     val positionState = positions.state.collectAsStateWithLifecycle()
+    val deletionState = repository.deletion.collectAsStateWithLifecycle()
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -105,9 +115,14 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
     val entry by nav.currentBackStackEntryAsState()
     var selectedId by rememberSaveable { mutableStateOf("") }
     var restored by remember { mutableStateOf(false) }
+    var savedSelectionProcess by rememberSaveable { mutableStateOf(selectionProcess) }
     val loaded = galleryState.value.loaded && positionState.value.loaded
     LaunchedEffect(loaded) {
         if (!loaded || restored) return@LaunchedEffect
+        if (savedSelectionProcess != selectionProcess) {
+            if (nav.currentBackStackEntry?.destination?.route == "select") nav.popBackStack()
+            savedSelectionProcess = selectionProcess
+        }
         val id = positionState.value.position.resumePhoto(galleryState.value.photos.map { it.nameWithoutExtension })
         if (id != null) {
             selectedId = id
@@ -124,17 +139,30 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
         }
     }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        SwipeDismissableNavHost(navController = nav, startDestination = "gallery") {
+        SwipeDismissableNavHost(navController = nav, startDestination = "gallery",
+            userSwipeEnabled = !deletionState.value.running) {
             composable("gallery") {
                 val gallery by galleryState
                 val position by positionState
                 if (restored) GalleryGrid(gallery.photos, error, position.position,
                     onGridPosition = positions::saveGrid,
+                    headerAction = {
+                        TextButton(onClick = { nav.navigate("select") { launchSingleTop = true } },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("select-photos")) { Text(stringResource(R.string.select_photos)) }
+                    },
                     onOpen = { file ->
                         selectedId = file.nameWithoutExtension
                         positions.openPhoto(selectedId)
                         nav.navigate("viewer")
                     })
+            }
+            composable("select") {
+                val gallery by galleryState
+                val position by positionState
+                val deletion by deletionState
+                if (restored) SelectionGallery(gallery.photos, position.position, deletion,
+                    positions::saveGrid, repository::startDeletion, repository::dismissDeletionResult,
+                    onDone = { nav.popBackStack() })
             }
             composable("viewer") {
                 val gallery by galleryState
@@ -148,8 +176,9 @@ private fun WatchGallery(repository: PhotoRepository, lifecycle: Lifecycle) {
 }
 
 @Composable
-private fun GalleryGrid(photos: List<File>, error: String?, position: WatchPosition,
-    onGridPosition: (String?, Int) -> Unit, onOpen: (File) -> Unit) {
+internal fun GalleryGrid(photos: List<File>, error: String?, position: WatchPosition,
+    onGridPosition: (String?, Int) -> Unit, onOpen: (File) -> Unit,
+    headerAction: (@Composable () -> Unit)? = null, selectedIds: Set<String>? = null, enabled: Boolean = true) {
     if (photos.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(horizontal = 30.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -187,13 +216,27 @@ private fun GalleryGrid(photos: List<File>, error: String?, position: WatchPosit
         }.focusable(), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 36.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item(span = { GridItemSpan(2) }, contentType = "header") {
-            Text("${photos.size} ${if (photos.size == 1) "photo" else "photos"}", Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall)
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (selectedIds == null) "${photos.size} ${if (photos.size == 1) "photo" else "photos"}"
+                    else pluralStringResource(R.plurals.selected_count, selectedIds.size, selectedIds.size), Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall)
+                headerAction?.invoke()
+            }
         }
-        items(photos, key = { it.name }, contentType = { "photo" }) { photo ->
+        itemsIndexed(photos, key = { _, photo -> photo.name }, contentType = { _, _ -> "photo" }) { index, photo ->
+            val selected = selectedIds?.contains(photo.nameWithoutExtension) == true
+            val description = stringResource(R.string.selection_photo_description, index + 1, photos.size)
+            val action = if (selectedIds == null) Modifier.clickable(enabled = enabled) { onOpen(photo) }
+                else Modifier.semantics { contentDescription = description }
+                    .toggleable(selected, enabled = enabled, role = Role.Checkbox) { onOpen(photo) }
             Box(Modifier.fillMaxWidth().aspectRatio(1f).testTag("grid-photo-${photo.nameWithoutExtension}").clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainer).clickable { onOpen(photo) }) {
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .then(if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)) else Modifier)
+                .then(action)) {
                 LocalPhoto(photo, Modifier.fillMaxSize(), ContentScale.Crop)
+                if (selected) Text("✓", Modifier.align(Alignment.TopEnd).padding(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)).padding(horizontal = 5.dp).clearAndSetSemantics {},
+                    color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }

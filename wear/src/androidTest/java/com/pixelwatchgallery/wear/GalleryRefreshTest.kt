@@ -53,6 +53,81 @@ class GalleryRefreshTest {
         waitForText(photoCount(initialCount))
     }
 
+    @Test fun bulkDeleteUsesFrozenIdsAndKeepsIncomingPhotosAndTombstones() {
+        compose.waitUntil(10_000) { repository.state.value.loaded }
+        check(repository.state.value.photos.isEmpty()) { "Requires a disposable emulator" }
+        repeat(3) { receivePhoto(landscape(it)) }
+        val selected = repository.state.value.photos.map { it.nameWithoutExtension }.toSet()
+        compose.onNodeWithTag("select-photos").performScrollTo().performClick()
+        compose.onNodeWithTag("delete-selected").assertIsNotEnabled()
+        compose.onNodeWithTag("select-all").performScrollTo().performClick()
+        compose.onNodeWithText("3 selected").assertIsDisplayed()
+        compose.onNodeWithTag("select-all").performScrollTo().performClick()
+        compose.onNodeWithText("0 selected").assertIsDisplayed()
+        compose.onNodeWithTag("select-all").performScrollTo().performClick()
+        captureBatch("selection")
+        compose.onNodeWithTag("gallery-grid").performScrollToKey("${selected.first()}.png")
+        captureBatch("selected-photos")
+        compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
+        compose.onNodeWithTag("delete-selected").performScrollTo().performClick()
+        captureBatch("confirmation")
+        val incoming = receivePhoto(landscape(1))
+        compose.onNodeWithText("Delete 3 photos?").assertIsDisplayed()
+        compose.onNodeWithTag("confirm-delete-selected").performScrollTo().performClick()
+        compose.waitUntil(10_000) { !repository.deletion.value.running && repository.state.value.photos.size == 1 }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("select-photos").fetchSemanticsNodes().isNotEmpty() }
+        org.junit.Assert.assertEquals(incoming, repository.state.value.photos.single().nameWithoutExtension)
+        runBlocking {
+            selected.forEach { id ->
+                org.junit.Assert.assertTrue(repository.received(id))
+                landscape(0).inputStream().use { repository.receive(id, "image/png", it) }
+            }
+        }
+        org.junit.Assert.assertEquals(1, repository.state.value.photos.size)
+        compose.activityRule.scenario.recreate()
+        waitForText("1 photo")
+    }
+
+    @Test fun bulkSelectionRestoresByUuidAndBackOrEdgeSwipeCancels() {
+        compose.waitUntil(10_000) { repository.state.value.loaded }
+        repeat(3) { receivePhoto() }
+        val id = repository.state.value.photos.first().nameWithoutExtension
+        compose.onNodeWithTag("select-photos").performScrollTo().performClick()
+        compose.onNodeWithTag("grid-photo-$id").performScrollTo().performClick().assertIsOn()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("grid-photo-$id").performScrollTo().assertIsOn()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("select-photos").performScrollTo().assertExists().performClick()
+        compose.onNodeWithTag("gallery-grid").performTouchInput {
+            swipe(Offset(2f, centerY), Offset(width * 0.9f, centerY))
+        }
+        compose.onNodeWithTag("select-photos").performScrollTo().assertExists()
+        org.junit.Assert.assertEquals(3, repository.state.value.photos.size)
+    }
+
+    @Test fun bulkConfirmationCancelAndExplicitCancelKeepPhotos() {
+        compose.waitUntil(10_000) { repository.state.value.loaded }
+        repeat(2) { receivePhoto() }
+        compose.onNodeWithTag("select-photos").performScrollTo().performClick()
+        compose.onNodeWithTag("select-all").performScrollTo().performClick()
+        compose.onNodeWithTag("delete-selected").performScrollTo().performClick()
+        compose.onNodeWithTag("cancel-delete-selected").performScrollTo().performClick()
+        compose.onNodeWithText("2 selected").assertExists()
+        compose.onNodeWithTag("cancel-selection").performScrollTo().performClick()
+        compose.onNodeWithTag("select-photos").assertExists()
+        org.junit.Assert.assertEquals(2, repository.state.value.photos.size)
+    }
+
+    private fun captureBatch(name: String) {
+        compose.waitForIdle()
+        Thread.sleep(300)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.getExternalFilesDir(null), "wear05-screenshots").apply { mkdirs() }
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
+
     @Test fun openViewerObservesIncomingPhotosAndDeletion() {
         compose.waitUntil(10_000) { repository.state.value.loaded }
         val initialCount = repository.state.value.photos.size
